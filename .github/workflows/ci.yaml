@@ -1,0 +1,69 @@
+name: Synchronize from Codeberg and Run CI
+
+on:
+  schedule:
+    -cron: '4 */12 * * *'
+  workflow_dispatch: {}
+  push:
+    branches: [ main ]
+
+jobs:
+  sync:
+    name: Synchronize Code from Codeberg
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    setps:
+      - name: Checkout Github mirror repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "Github Actions Bot"
+          git config --global user.email "actions@github.com"
+      
+      - name: Pull from Codeberg and Merge
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          git remote add upstream https://${{ secrets.CODEBERG_TOKEN }}@codeberg.org/4Drawers/compost-bin.git
+          git fetch upstream
+          git merge upstream/main --allow-unrelated-histories --no-edit --strategy-option=theirs || {
+            echo "合并可能遇到冲突，将尝试重置..."
+            git reset --hard upstream/main
+          }
+          git push origin main
+
+  ci:
+    name: Backend CI (Tests)
+    runs-on: ubuntu-latest
+    needs: sync
+    if: success() && needs.sync.result == 'success' || github.event_name == 'push'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      run: make build/docker
+
+    - name: Start services
+      run: docker-compose up -d
+
+    - name: Run tests
+      env:
+        LOG_DIR: "${{ github.workspace }}/build/data/compost_bin"
+        run: go clean --testcache && go test ./test/...
+
+    - name: Cleanup
+      if: always()
+      run: make clean
