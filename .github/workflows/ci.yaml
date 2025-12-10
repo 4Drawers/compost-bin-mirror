@@ -2,7 +2,7 @@ name: Synchronize from Codeberg and Run CI
 
 on:
   schedule:
-    -cron: '4 */12 * * *'
+    - cron: '4 */12 * * *'
   workflow_dispatch: {}
   push:
     branches: [ main ]
@@ -12,7 +12,11 @@ jobs:
     name: Synchronize Code from Codeberg
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    setps:
+    permissions:
+      contents: write
+    outputs:
+      sync_succeeded: ${{ steps.verify-and-upload.outputs.success }}
+    steps:
       - name: Checkout Github mirror repository
         uses: actions/checkout@v4
         with:
@@ -21,49 +25,89 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "Github Actions Bot"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
       
-      - name: Pull from Codeberg and Merge
+      - name: Pull from Codeberg via Archive
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
-          git remote add upstream https://${{ secrets.CODEBERG_TOKEN }}@codeberg.org/4Drawers/compost-bin.git
-          git fetch upstream
-          git merge upstream/main --allow-unrelated-histories --no-edit --strategy-option=theirs || {
-            echo "合并可能遇到冲突，将尝试重置..."
-            git reset --hard upstream/main
-          }
+          REPO_URL="https://${{ secrets.CODEBERG_TOKEN }}@codeberg.org/4Drawers/compost-bin"
+          echo "正在从Codeberg下载源码包…"
+          curl -L -f "$REPO_URL/archive/main.tar.gz" -o source.tar.gz
+          echo "正在解压并覆盖文件…"
+          tar -xzf source.tar.gz --strip-components=1
+          rm -f source.tar.gz
+
+      - name: Verify and Upload Synced Code
+        id: verify-and-upload
+        run: |
+          if [ -f "go.mod" ] && [ -f "Makefile" ]; then
+            echo "关键文件验证通过，打包源码。"
+            find . -type f \
+              -not -path './.git/*' \
+              -not -path './synced-source.tar.gz' \
+              -not -path './source.tar.gz' \
+              > filelist.txt 2>/dev/null || true
+            tar -czf synced-source.tar.gz --files-from=filelist.txt
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "错误：缺少 go.mod 或 Makefile"
+            echo "当前目录内容："
+            ls -la
+            exit 1
+          fi
+      - name: Upload Synced Source as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: synced-source
+          path: synced-source.tar.gz
+          retention-days: 1
+
+      - name: Commit and Push Changes
+        run: |
+          git add -A
+          git commit -m "chore: sync from Codeberg via archive [skip ci]" || echo "没有新更改，无需提交"
           git push origin main
 
   ci:
     name: Backend CI (Tests)
     runs-on: ubuntu-latest
-    needs: sync
-    if: success() && needs.sync.result == 'success' || github.event_name == 'push'
+    needs: [sync]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (needs.sync.outputs.sync_succeeded == 'true')
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Download Synced Source Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: synced-source
+      - name: Unpack Source Code
+        run: tar -xzf synced-source.tar.gz && rm synced-source.tar.gz && ls -la
       
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.24'
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
       
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Build Docker image
-      run: make build/docker
+      - name: Build Docker image
+        run: |
+          mkdir -p ./build
+          echo "正在编译Go二进制文件..."
+          go build -o ./build ./cmd
+          mkdir -p ./build/data/compost_bin ./build/data/mysql ./build/data/redis
+          echo "正在构建Docker镜像..."
+          docker buildx build -f ./cmd/Dockerfile -t compost-bin:v0.1 .
 
-    - name: Start services
-      run: docker-compose up -d
+      - name: Start services
+        run: docker compose up -d
 
-    - name: Run tests
-      env:
-        LOG_DIR: "${{ github.workspace }}/build/data/compost_bin"
+      - name: Run tests
+        env:
+          LOG_DIR: "${{ github.workspace }}/build/data/compost_bin"
         run: go clean --testcache && go test ./test/...
 
-    - name: Cleanup
-      if: always()
-      run: make clean
+      - name: Cleanup
+        if: always()
+        run: docker compose down && docker rmi compost-bin:v0.1
