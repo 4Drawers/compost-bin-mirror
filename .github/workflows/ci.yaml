@@ -66,6 +66,7 @@ jobs:
 
       - name: Commit and Push Changes
         run: |
+          rm -f synced-source.tar.gz filelist.txt
           git add -A
           git commit -m "chore: sync from Codeberg via archive [skip ci]" || echo "没有新更改，无需提交"
           git push origin main
