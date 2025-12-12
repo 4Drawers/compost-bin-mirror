@@ -1,0 +1,76 @@
+services:
+  mysql:
+    image: mysql:latest
+    container_name: compost-bin-mysql-ins
+    environment:
+      MYSQL_ROOT_PASSWORD: zXdc1ab_330
+      MYSQL_DATABASE: compost_bin
+      MYSQL_USER: compost_bin
+      MYSQL_PASSWORD: zXdc1ab_330
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./build/data/mysql:/var/lib/mysql
+    networks:
+      - compost-bin-network
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -u compost_bin -pzXdc1ab_330 compost_bin -e 'SELECT 1;'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+  
+  redis:
+    image: redis:7.4-alpine
+    container_name: compost-bin-redis-ins
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=zXdc1ab_330
+    command: >
+      redis-server /etc/redis/redis.conf
+      -- requirepass zXdc1ab_330
+    restart: unless-stopped
+    networks:
+      - compost-bin-network
+    volumes:
+      - ./config/redis.conf:/etc/redis/redis.conf
+      - ./build/data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  
+  app:
+    image: compost-bin:v0.1
+    build:
+      context: .
+      dockerfile: ./cmd/Dockerfile
+    container_name: compost-bin_v0.1-ins
+    ports:
+      - "17890:17890"
+    volumes:
+      - ./build/data/compost_bin:/usr/src/data
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: compost_bin
+      DB_PASSWORD: zXdc1ab_330
+      DB_NAME: compost_bin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: zXdc1ab_330
+      REDIS_DB: 0
+      JWT_PASSWORD: zXdc1ab_330
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - compost-bin-network
+  
+networks:
+  compost-bin-network:
+    driver: bridge
