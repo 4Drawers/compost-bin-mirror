@@ -21,7 +21,7 @@ func GenerateTokens(ctx context.Context, userId int64, isAccess bool,
 		return "", fmt.Errorf("触发安全机制，签名失败（T_T）")
 	}
 
-	key := fmt.Sprintf("token:access=%T:%d", isAccess, userId)
+	key := fmt.Sprintf("token:access=%t:%d", isAccess, userId)
 	err = middleware.GetCache().Set(ctx, key, token, b.refreshExpire).Err()
 	if err != nil {
 		logger.WithContex(ctx).Errorf("Failed to store jwt token to redis: %v", err)
@@ -32,7 +32,7 @@ func GenerateTokens(ctx context.Context, userId int64, isAccess bool,
 }
 
 func ValidRefresh(ctx context.Context, userId int64, token string) bool {
-	key := fmt.Sprintf("token:access=%T:%d", false, userId)
+	key := fmt.Sprintf("token:access=%t:%d", false, userId)
 	stored, err := middleware.GetCache().Get(ctx, key).Result()
 	if err != nil {
 		logger.WithContex(ctx).Errorf("Failed to take jwt token %s from redis: %v", key, err)
@@ -42,7 +42,7 @@ func ValidRefresh(ctx context.Context, userId int64, token string) bool {
 }
 
 func TryBlackListToken(ctx context.Context, userId int64) error {
-	key := fmt.Sprintf("token:access=%T:%d", true, userId)
+	key := fmt.Sprintf("token:access=%t:%d", true, userId)
 	if err := middleware.GetCache().Del(ctx, key).Err(); err != nil {
 		logger.WithContex(ctx).Errorf("Failed to delete jwt token %s from redis: %v", key, err)
 	}
@@ -60,7 +60,7 @@ func BlackListToken(ctx context.Context, userId int64) {
 }
 
 func TokenBlackListed(ctx context.Context, userId int64) bool {
-	key := fmt.Sprintf("token:access=%T:%d", true, userId)
+	key := fmt.Sprintf("token:access=%t:%d", true, userId)
 	if err := middleware.GetCache().Get(ctx, key).Err(); err != nil {
 		logger.WithContex(ctx).Errorf("Failed to take jwt token %s from redis: %v", key, err)
 		return true
