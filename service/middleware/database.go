@@ -62,3 +62,5 @@ func getEnv(variableName, defaultValue string) string {
 	}
 	return defaultValue
 }
+
+var DatabaseFailure = fmt.Errorf("数据库错误o（T_T）o")

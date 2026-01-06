@@ -9,7 +9,6 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -31,34 +30,40 @@ func RegisterUser(username, password string) error {
 	return parseDbError(res.Error)
 }
 
-func Login(userInfo, password string) (dao.User, error) {
-	emailPattern := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-
+func LoginWithEmail(email, password string) (dao.User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var user dao.User
-	var err error
-	if emailPattern.MatchString(userInfo) {
-		user, err = gorm.G[dao.User](middleware.GetDb()).Where("email=?", userInfo).First(ctx)
-		if err != nil {
-			return user, parseDbError(err)
-		}
-	} else {
-		user, err = gorm.G[dao.User](middleware.GetDb()).Where("username=?", userInfo).First(ctx)
-		if err != nil {
-			return user, parseDbError(err)
-		}
+	user, err := gorm.G[dao.User](middleware.GetDb()).Where("email=?", email).First(ctx)
+	if err != nil {
+		return user, parseDbError(err)
 	}
 
 	if user.Password != passwordHash(password, user.Salt) {
 		return user, fmt.Errorf("密码错误！")
 	}
+
 	return user, nil
 }
 
-// PubInfo returns all public infomation of user with specified id.
-func PubInfo(userId int64) (dao.User, error) {
+func LoginWithUsername(username, password string) (dao.User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	user, err := gorm.G[dao.User](middleware.GetDb()).Where("username=?", username).First(ctx)
+	if err != nil {
+		return user, parseDbError(err)
+	}
+
+	if user.Password != passwordHash(password, user.Salt) {
+		return user, fmt.Errorf("密码错误！")
+	}
+
+	return user, nil
+}
+
+// Profile returns all infomation about user whose id equals userId.
+func Profile(userId int64) (dao.User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -87,7 +92,7 @@ func parseDbError(err error) error {
 		}
 	}
 
-	return err
+	return middleware.DatabaseFailure
 }
 
 func passwordHash(password, salt string) string {

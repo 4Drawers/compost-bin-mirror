@@ -2,9 +2,9 @@ package middleware
 
 import (
 	"compost-bin/logger"
+	echo_errors "compost-bin/router/echo-errors"
 	"compost-bin/service/jwt"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -15,21 +15,14 @@ func Auth(accessSecret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			auth := c.Request().Header.Get("Authorization")
-			logger.WithContex(c.Request().Context()).Infof("Got token: %s", auth)
 			if !strings.HasPrefix(auth, "Bearer ") {
-				return c.JSON(http.StatusUnauthorized, echo.Map{
-					"code": http.StatusUnauthorized,
-					"msg":  "请先登录",
-				})
+				return echo_errors.Forbidden(c, "请先登录")
 			}
 
 			token := strings.TrimPrefix(auth, "Bearer ")
 			claims, err := jwt.ParseToken(token, accessSecret, true)
 			if err != nil {
-				return c.JSON(http.StatusUnauthorized, echo.Map{
-					"code": http.StatusUnauthorized,
-					"msg":  "数据无价，请您自重！",
-				})
+				return echo_errors.Forbidden(c, "数据无价，请您自重！")
 			}
 
 			refresher := func() *jwt.JwtBuilder {
@@ -44,34 +37,21 @@ func Auth(accessSecret string) echo.MiddlewareFunc {
 
 			if jwt.TokenBlackListed(c.Request().Context(), claims.UserId) {
 				refTk := c.Request().Header.Get("Refresh")
-				if !strings.HasPrefix(refTk, "Bearer ") {
-					return c.JSON(http.StatusUnauthorized, echo.Map{
-						"code": http.StatusUnauthorized,
-						"msg":  "距上次登录时间过长，请重新登录！",
-					})
-				}
-
-				if !jwt.ValidRefresh(c.Request().Context(), claims.UserId, strings.TrimPrefix(refTk, "Bearer ")) {
-					return c.JSON(http.StatusUnauthorized, echo.Map{
-						"code": http.StatusUnauthorized,
-						"msg":  "距上次登录时间过长，请重新登录！",
-					})
+				if !strings.HasPrefix(refTk, "Bearer ") ||
+					!jwt.ValidRefresh(c.Request().Context(), claims.UserId, strings.TrimPrefix(refTk, "Bearer ")) {
+					return echo_errors.LoginAgain(c, "距上次登录时间过长，请重新登录！")
 				}
 
 				token, err := jwt.GenerateTokens(c.Request().Context(), claims.UserId, true, refresher)
 				if err != nil {
-					logger.WithContex(c.Request().Context()).Errorf("Failed to generate access token: %v", err)
-					return c.JSON(http.StatusInternalServerError, echo.Map{
-						"code":   http.StatusInternalServerError,
-						"msg":    "服务器错误！请联系管理员！",
-						"result": nil,
-					})
+					logger.WithContex(c.Request().Context()).Errorf("Failed to refresh access token: %v", err)
+					return echo_errors.ServerBroken(c, "安全系统崩溃，请联系管理员！")
 				}
 				c.Response().Header().Set("X-Authorization", token)
 			} else if time.Now().Add(2*time.Minute).Compare(claims.ExpiresAt.Time) > 0 {
 				token, err := jwt.GenerateTokens(c.Request().Context(), claims.UserId, true, refresher)
 				if err != nil {
-					logger.WithContex(c.Request().Context()).Errorf("Failed to generate access token: %v", err)
+					logger.WithContex(c.Request().Context()).Errorf("Failed to refresh access token: %v", err)
 				} else {
 					jwt.BlackListToken(c.Request().Context(), claims.UserId)
 					c.Response().Header().Set("X-Authorization", token)
