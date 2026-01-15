@@ -16,6 +16,8 @@ type User struct {
 	Password  string `gorm:"not null;size:200"`
 	Salt      string `gorm:"not null;size:100"`
 	Character string `gorm:"not null;size:10;default:'sensitive'"`
+	Pwd2fa    string `gorm:"size:200;default:null;column:pwd_2fa"`
+	TfaCerted bool   `gorm:"default:false"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`

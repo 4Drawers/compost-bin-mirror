@@ -43,7 +43,7 @@ services:
       retries: 3
   
   app:
-    image: compost-bin:v0.1
+    image: compost-bin:v0.2
     build:
       context: .
       dockerfile: ./cmd/Dockerfile
@@ -63,6 +63,7 @@ services:
       REDIS_PASSWORD: zXdc1ab_330
       REDIS_DB: 0
       JWT_PASSWORD: zXdc1ab_330
+      MASTER_KEY: ABCDEFGHIJK12345678901234567890L # Key being used to encrypt users' 2FA passwords.
     depends_on:
       mysql:
         condition: service_healthy

@@ -7,6 +7,7 @@ import (
 	"compost-bin/service/jwt"
 	db "compost-bin/service/middleware"
 	"compost-bin/service/middleware/dao"
+	two_factor_auth_service "compost-bin/service/two_factor_auth"
 	user_service "compost-bin/service/user"
 	"os"
 	"regexp"
@@ -23,6 +24,8 @@ func WithUserApiV1(g *echo.Group) {
 		user.POST("/login", login)
 		user.GET("/profile/:user_id", profile, middleware.Auth(getEnv("JWT_PASSWORD", "")))
 		user.PUT("/profile/email/:user_id", changeEmail, middleware.Auth(getEnv("JWT_PASSWORD", "")))
+		user.GET("/2fa/:user_id", get2FaInfo, middleware.Auth(getEnv("JWT_PASSWORD", "")))
+		user.POST("/2fa/:user_id", cert2Fa, middleware.Auth(getEnv("JWT_PASSWORD", "")))
 	}
 }
 
@@ -118,6 +121,69 @@ func profile(ctx echo.Context) error {
 	return echo_errors.Success(ctx, "查询成功", result)
 }
 
+// get2FaInfo gets 2FA url and a bool value representing if user has registered as 2FA user.
+// GET /user/2fa/:user_id
+func get2FaInfo(ctx echo.Context) error {
+	param := ctx.Param("user_id")
+
+	userId, err := strconv.Atoi(param)
+	if err != nil {
+		return echo_errors.BadRequest(ctx, "请提供正确的用户ID！")
+	}
+
+	if ctx.Request().Header.Get("User-Id") != param {
+		return echo_errors.BadRequest(ctx, "仅支持查询自己的账户信息！")
+	}
+
+	user, err := user_service.Profile(int64(userId))
+	if err != nil {
+		return echo_errors.BadRequest(ctx, err.Error())
+	}
+
+	pwd, url, err := two_factor_auth_service.Generate(user.Username)
+	if err != nil {
+		return echo_errors.ServerBroken(ctx, err.Error())
+	}
+
+	if user.Pwd2fa == "" {
+		if err = user_service.UpdatePwd2Fa(user.Id, pwd); err != nil {
+			return echo_errors.ServerBroken(ctx, err.Error())
+		}
+	}
+
+	return echo_errors.Success(ctx, "请求成功！", echo.Map{
+		"url":          url,
+		"certificated": user.TfaCerted,
+	})
+}
+
+func cert2Fa(ctx echo.Context) error {
+	id, err := identityValid(ctx)
+	if err != nil {
+		return err
+	}
+
+	user, err := user_service.Profile(id)
+	if err != nil {
+		return whoseProblem(ctx, err)
+	}
+
+	code := ctx.FormValue("code")
+	password := user.Pwd2fa
+
+	codeValid := two_factor_auth_service.Certificate(password, code)
+
+	if !user.TfaCerted && codeValid {
+		user_service.Update2FaCertification(user.Id)
+	}
+
+	if codeValid {
+		return echo_errors.Success(ctx, "验证成功！", codeValid)
+	} else {
+		return echo_errors.BadRequest(ctx, "验证失败。。。")
+	}
+}
+
 // changeEmail lets users change the emails of themselves.
 // - user hasn't registered an email address in profile of (him/her/...)self
 //   - register this email address as user's unconfirmed email (redis cache)
@@ -147,4 +213,19 @@ func whoseProblem(ctx echo.Context, err error) error {
 		return echo_errors.ServerBroken(ctx, err.Error())
 	}
 	return echo_errors.BadRequest(ctx, err.Error())
+}
+
+func identityValid(ctx echo.Context) (int64, error) {
+	param := ctx.Param("user_id")
+
+	userId, err := strconv.Atoi(param)
+	if err != nil {
+		return 0, echo_errors.BadRequest(ctx, "请提供正确的用户ID！")
+	}
+
+	if ctx.Request().Header.Get("User-Id") != param {
+		return 0, echo_errors.BadRequest(ctx, "仅支持查询自己的账户信息！")
+	}
+
+	return int64(userId), nil
 }

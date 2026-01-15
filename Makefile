@@ -23,9 +23,9 @@ run/docker:
 
 test: build/docker run/docker
 	go clean --testcache
-	LOG_DIR="$(CURDIR)/build/data/compost_bin" go test ./test/...
+	LOG_DIR="$(CURDIR)/build/data/compost_bin" MASTER_KEY="ABCDEFGHIJK12345678901234567890A" go test ./test/...
 
 clean:
 	docker-compose down
-	docker rmi compost-bin:v0.1
+	docker rmi compost-bin:v0.2
 	$(RM) -r ./build

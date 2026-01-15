@@ -253,6 +253,86 @@ func wait4Server(t *testing.T) bool {
 	return false
 }
 
+func TestCert2Fa(t *testing.T) {
+	once.Do(func() {
+		if !wait4Server(t) {
+			t.Fatalf("Server didn't became ready in time.")
+		}
+	})
+
+	apiVersion := 1
+	urlPrefix := fmt.Sprintf("%s/v%d/user", baseUrl, apiVersion)
+
+	mustExistUsername := "user-4-2fa-test"
+	mustExistPassword := "pswd-4-2fa-test"
+
+	_, err := http.PostForm(fmt.Sprintf("%s/%s", urlPrefix, "register"), url.Values{
+		"username": []string{mustExistUsername},
+		"password": []string{mustExistPassword},
+	})
+	if err != nil {
+		t.Fatalf("Failed to register user: %v", err)
+	}
+
+	loginResp, err := http.PostForm(fmt.Sprintf("%s/%s", urlPrefix, "login"), url.Values{
+		"user_info": []string{mustExistUsername},
+		"password":  []string{mustExistPassword},
+	})
+	if err != nil {
+		t.Fatalf("Failed to login: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	_, _, loginRes, err := unmarshalRespBody(loginResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to login: %v", err)
+	}
+
+	var id int64
+	if userId, ok := loginRes.(float64); !ok {
+		t.Fatalf("Api /user/login didn't return user's id correctly, got data type: %T", loginRes)
+	} else {
+		id = int64(userId)
+	}
+	auth := loginResp.Header.Get("X-Authorization")
+	ref := loginResp.Header.Get("X-Refresh")
+
+	cert2FaReq, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/2fa/%d", urlPrefix, id), nil)
+	if err != nil {
+		t.Fatalf("Failed to build 2fa request: %v", err)
+	}
+	cert2FaReq.Header.Add("Authorization", fmt.Sprintf("%s %s", "Bearer", auth))
+	cert2FaReq.Header.Add("Refresh", fmt.Sprintf("%s %s", "Bearer", ref))
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	cert2FaResp, err := client.Do(cert2FaReq)
+	if err != nil {
+		t.Fatalf("Failed to request for 2fa: %v", err)
+	}
+
+	_, msg, cert2FaRes, err := unmarshalRespBody(cert2FaResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal 2fa info: %v", err)
+	}
+
+	if cert2FaResp.StatusCode != http.StatusOK {
+		t.Fatalf("Api /user/2fa response code %d: %s", cert2FaResp.StatusCode, msg)
+	}
+
+	tfaInfo := cert2FaRes.(map[string]any)
+	if otpUrl, ok := tfaInfo["url"].(string); !ok {
+		t.Fatalf("Unexpected url <%v, %T>, expected <%T>", otpUrl, otpUrl, "")
+	} else {
+		fmt.Printf("Got url: %v", otpUrl)
+	}
+
+	if certed, ok := tfaInfo["certificated"].(bool); !ok {
+		t.Fatalf("Unexpected certification info <%v, %T>, expected <false, bool>", certed, certed)
+	} else if certed {
+		t.Fatalf("Unexpected certification info %t, expected false", certed)
+	}
+}
+
 func unmarshalRespBody(body io.ReadCloser) (code int, msg string, result any, err error) {
 	data, err := io.ReadAll(body)
 	if err != nil && err != io.EOF {

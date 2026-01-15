@@ -71,6 +71,22 @@ func Profile(userId int64) (dao.User, error) {
 	return user, parseDbError(err)
 }
 
+func UpdatePwd2Fa(userId int64, pwd string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := gorm.G[dao.User](middleware.GetDb()).Where("id=?", userId).Update(ctx, "pwd_2fa", pwd)
+	return parseDbError(err)
+}
+
+func Update2FaCertification(userId int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := gorm.G[dao.User](middleware.GetDb()).Where("id=?", userId).Update(ctx, "tfa_certed", true)
+	return parseDbError(err)
+}
+
 func parseDbError(err error) error {
 	if err == nil {
 		return nil
